@@ -1,0 +1,68 @@
+<div class="editor-shell">
+  <div class="editor-row">
+    <div class="editor-pane">
+      <code-editor
+        class="sql-editor"
+        [(ngModel)]="sqlInput"
+        [extensions]="sqlExtensions"
+        [lineWrapping]="true"
+        aria-label="SQL editor"
+      ></code-editor>
+    </div>
+    <div class="editor-pane">
+      <div class="results-pane" aria-label="Query results">
+        <ng-container *ngIf="queryResults.length; else noResults">
+          <div
+            class="result-set"
+            *ngFor="let result of queryResults; let i = index"
+          >
+            <div class="result-title">Result {{ i + 1 }}</div>
+            <div class="table-wrapper" *ngIf="result.values?.length; else noRows">
+              <table class="results-table">
+                <thead>
+                  <tr>
+                    <th *ngFor="let col of result.columns">{{ col }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let row of result.values">
+                    <td *ngFor="let cell of row">
+                      {{ cell === null || cell === undefined ? "NULL" : cell }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <ng-template #noRows>
+              <div class="no-rows">No rows returned.</div>
+            </ng-template>
+          </div>
+        </ng-container>
+        <ng-template #noResults>
+          <div class="no-results">Run a query to see results.</div>
+        </ng-template>
+      </div>
+    </div>
+  </div>
+  <div class="controls">
+    <button
+      type="button"
+      class="seed-button"
+      *ngIf="!hasDatabase"
+      [disabled]="isSeeding"
+      (click)="seedDatabase()"
+    >
+      {{ isSeeding ? "Seeding..." : "Seed database" }}
+    </button>
+    <button
+      type="button"
+      class="run-button"
+      [disabled]="isRunning"
+      (click)="run()"
+    >
+      {{ isRunning ? "Running..." : "Run" }}
+    </button>
+    <p class="status" *ngIf="statusMessage">{{ statusMessage }}</p>
+    <p class="status" *ngIf="lastAddress">Last range: {{ lastAddress }}</p>
+  </div>
+</div>
