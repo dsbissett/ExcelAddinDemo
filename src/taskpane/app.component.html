@@ -1,68 +1,280 @@
-<div class="editor-shell">
-  <div class="editor-row">
-    <div class="editor-pane">
-      <code-editor
-        class="sql-editor"
-        [(ngModel)]="sqlInput"
-        [extensions]="sqlExtensions"
-        [lineWrapping]="true"
-        aria-label="SQL editor"
-      ></code-editor>
-    </div>
-    <div class="editor-pane">
-      <div class="results-pane" aria-label="Query results">
-        <ng-container *ngIf="queryResults.length; else noResults">
-          <div
-            class="result-set"
-            *ngFor="let result of queryResults; let i = index"
+<div class="editor-shell container-fluid">
+  <ul class="nav nav-tabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        [class.active]="activeTab === 'sql'"
+        type="button"
+        role="tab"
+        aria-controls="sql-pane"
+        aria-selected="{{ activeTab === 'sql' }}"
+        (click)="setTab('sql')"
+      >
+        SQL
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        [class.active]="activeTab === 'pdf'"
+        type="button"
+        role="tab"
+        aria-controls="pdf-pane"
+        aria-selected="{{ activeTab === 'pdf' }}"
+        (click)="setTab('pdf')"
+      >
+        Pdf
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        [class.active]="activeTab === 'pdfViewer'"
+        [disabled]="!hasDataFiles"
+        type="button"
+        role="tab"
+        aria-controls="pdf-viewer-pane"
+        aria-selected="{{ activeTab === 'pdfViewer' }}"
+        [attr.aria-disabled]="!hasDataFiles"
+        (click)="setTab('pdfViewer')"
+      >
+        Pdf Viewer
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content pt-3">
+    <div
+      id="sql-pane"
+      class="tab-pane fade"
+      [class.show]="activeTab === 'sql'"
+      [class.active]="activeTab === 'sql'"
+      role="tabpanel"
+    >
+      <div class="card shadow-sm controls mb-3">
+        <div class="card-body d-flex flex-wrap align-items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-outline-primary"
+            [disabled]="isSeeding || !canSeedDatabase"
+            (click)="seedDatabase()"
           >
-            <div class="result-title">Result {{ i + 1 }}</div>
-            <div class="table-wrapper" *ngIf="result.values?.length; else noRows">
-              <table class="results-table">
-                <thead>
-                  <tr>
-                    <th *ngFor="let col of result.columns">{{ col }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr *ngFor="let row of result.values">
-                    <td *ngFor="let cell of row">
-                      {{ cell === null || cell === undefined ? "NULL" : cell }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            {{ isSeeding ? "Seeding..." : "Seed database" }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            [disabled]="isRunning || !hasDatabase"
+            (click)="run()"
+          >
+            {{ isRunning ? "Running..." : "Run" }}
+          </button>
+          <span class="text-muted small" *ngIf="statusMessage">{{ statusMessage }}</span>
+          <span class="badge text-bg-secondary" *ngIf="lastAddress">Last range: {{ lastAddress }}</span>
+        </div>
+      </div>
+      <div class="row g-3 align-items-stretch editor-row">
+        <div class="col-xl-6 d-flex">
+          <div class="card shadow-sm flex-fill pane-card">
+            <div class="card-header d-flex align-items-center justify-content-between">
+              <span class="fw-semibold">SQL editor</span>
+              <span
+                class="badge"
+                [ngClass]="hasDatabase ? 'text-bg-success' : 'text-bg-warning text-dark'"
+              >
+                {{ hasDatabase ? "Database ready" : "Seed required" }}
+              </span>
             </div>
-            <ng-template #noRows>
-              <div class="no-rows">No rows returned.</div>
-            </ng-template>
+            <div class="card-body p-0">
+              <code-editor
+                class="sql-editor"
+                [(ngModel)]="sqlInput"
+                [extensions]="sqlExtensions"
+                [lineWrapping]="true"
+                aria-label="SQL editor"
+              ></code-editor>
+            </div>
           </div>
-        </ng-container>
-        <ng-template #noResults>
-          <div class="no-results">Run a query to see results.</div>
-        </ng-template>
+        </div>
+        <div class="col-xl-6 d-flex">
+          <div class="card shadow-sm flex-fill pane-card">
+            <div class="card-header fw-semibold">Query results</div>
+            <div class="card-body results-pane" aria-label="Query results">
+              <ng-container *ngIf="queryResults.length; else noResults">
+                <div
+                  class="result-set"
+                  *ngFor="let result of queryResults; let i = index"
+                >
+                  <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="result-title mb-0">Result {{ i + 1 }}</div>
+                    <span class="badge text-bg-light">
+                      {{ result.values?.length || 0 }} rows
+                    </span>
+                  </div>
+                  <div class="table-wrapper table-responsive" *ngIf="result.values?.length; else noRows">
+                    <table class="table table-sm table-striped table-bordered results-table mb-0">
+                      <thead class="table-light">
+                        <tr>
+                          <th *ngFor="let col of result.columns">{{ col }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr *ngFor="let row of result.values">
+                          <td *ngFor="let cell of row">
+                            {{ cell === null || cell === undefined ? "NULL" : cell }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <ng-template #noRows>
+                    <div class="alert alert-light border mb-0" role="status">
+                      No rows returned.
+                    </div>
+                  </ng-template>
+                </div>
+              </ng-container>
+              <ng-template #noResults>
+                <div class="alert alert-info mb-0" role="status">
+                  Run a query to see results.
+                </div>
+              </ng-template>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="controls">
-    <button
-      type="button"
-      class="seed-button"
-      *ngIf="!hasDatabase"
-      [disabled]="isSeeding"
-      (click)="seedDatabase()"
+
+    <div
+      id="pdf-pane"
+      class="tab-pane fade"
+      [class.show]="activeTab === 'pdf'"
+      [class.active]="activeTab === 'pdf'"
+      role="tabpanel"
     >
-      {{ isSeeding ? "Seeding..." : "Seed database" }}
-    </button>
-    <button
-      type="button"
-      class="run-button"
-      [disabled]="isRunning"
-      (click)="run()"
+      <div class="card shadow-sm">
+        <div class="card-header fw-semibold">Pdf</div>
+        <div class="card-body d-flex flex-column gap-3">
+          <div class="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2">
+            <input
+              #pdfInput
+              type="file"
+              id="pdf-file-input"
+              accept="application/pdf,.pdf"
+              multiple
+              class="d-none"
+              (change)="onPdfSelected($event)"
+            />
+            <label class="form-label mb-0" for="upload-button">Choose files to upload</label>
+            <button
+              type="button"
+              id="upload-button"
+              class="btn btn-outline-secondary"
+              (click)="openPdfPicker(pdfInput)"
+            >
+              Choose files
+            </button>
+          </div>
+
+          <div class="table-responsive" *ngIf="uploads.length">
+            <table class="table align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">File Name</th>
+                  <th scope="col" style="width: 45%;">Progress</th>
+                  <th scope="col" style="width: 15%;">Status</th>
+                  <th scope="col" class="text-end" style="width: 10%;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let upload of uploads">
+                  <td class="small text-break">{{ upload.fileName }}</td>
+                  <td style="min-width: 200px;">
+                    <div class="progress" aria-label="Upload progress for {{ upload.fileName }}">
+                      <div
+                        class="progress-bar"
+                        role="progressbar"
+                        [style.width.%]="upload.progress"
+                        [attr.aria-valuenow]="upload.progress"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      >
+                        {{ upload.progress }}%
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <span
+                      class="badge"
+                      [ngClass]="{
+                        'text-bg-secondary': upload.status === 'Queued',
+                        'text-bg-info': upload.status === 'In Progress',
+                        'text-bg-success': upload.status === 'Complete'
+                      }"
+                    >
+                      {{ upload.status }}
+                    </span>
+                  </td>
+                  <td class="text-end">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-danger"
+                      [disabled]="!upload.xmlPartName || upload.isDeleting || upload.status === 'In Progress'"
+                      (click)="deleteUpload(upload)"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="pdf-viewer-pane"
+      class="tab-pane fade"
+      [class.show]="activeTab === 'pdfViewer'"
+      [class.active]="activeTab === 'pdfViewer'"
+      role="tabpanel"
     >
-      {{ isRunning ? "Running..." : "Run" }}
-    </button>
-    <p class="status" *ngIf="statusMessage">{{ statusMessage }}</p>
-    <p class="status" *ngIf="lastAddress">Last range: {{ lastAddress }}</p>
+      <div class="card shadow-sm">
+        <div class="card-header fw-semibold">Pdf Viewer</div>
+        <div class="card-body">
+          <div *ngIf="isLoadingThumbnails" class="text-muted">
+            Loading PDFs...
+          </div>
+          <ng-container *ngIf="!isLoadingThumbnails">
+            <div
+              class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3"
+              *ngIf="pdfThumbnails.length; else noPdfThumbs"
+            >
+              <div class="col" *ngFor="let thumb of pdfThumbnails">
+                <div class="card h-100 pdf-thumb-card">
+                  <img
+                    class="card-img-top pdf-thumb-image"
+                    [src]="thumb.imageUrl"
+                    [alt]="thumb.fileName"
+                  />
+                  <div class="card-body py-2">
+                    <div class="small fw-semibold text-truncate" [title]="thumb.fileName">
+                      {{ thumb.fileName }}
+                    </div>
+                    <div class="text-muted small" *ngIf="thumb.createdUtc">
+                      Uploaded: {{ thumb.createdUtc | date: "short" }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <ng-template #noPdfThumbs>
+              <p class="text-muted mb-0">No PDF files available to view.</p>
+            </ng-template>
+          </ng-container>
+        </div>
+      </div>
+    </div>
   </div>
 </div>

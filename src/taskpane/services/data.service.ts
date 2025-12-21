@@ -5,16 +5,27 @@ import initSqlJs, { Database, SqlJsStatic } from "sql.js";
 /* global Excel */
 
 const CUSTOM_XML_ELEMENT = "proofPanelData";
+const DATA_FILE_ELEMENT_PREFIX = "dataFile";
+
+export interface DataFileRecord {
+  fileName: string;
+  xmlPartName: string;
+  rawFileSize: number;
+  compressedFileSize: number;
+  createdUtc: string;
+}
 
 @Injectable({ providedIn: "root" })
 export class DataService {
   private sqlPromise?: Promise<SqlJsStatic>;
   private db?: Database;
+  private readonly requiredTables = ["Pages", "Cells", "PolygonData"];
+  private officeReadyPromise?: Promise<unknown>;
 
   constructor(private logger: NGXLogger) {}
 
   async hasDatabase(): Promise<boolean> {
-    if (!this.isExcelAvailable()) {
+    if (!(await this.waitForOfficeReady())) {
       this.logger.warn("hasDatabase: Excel not available");
       return false;
     }
@@ -27,6 +38,32 @@ export class DataService {
 
     this.logger.info(`hasDatabase: ${exists ? "found existing database" : "no database found"}`);
     return exists;
+  }
+
+  async getDatabaseState(
+    requiredTables: string[] = this.requiredTables,
+  ): Promise<{ hasDatabase: boolean; hasData: boolean; missingRequiredTables: string[] }> {
+    if (!(await this.waitForOfficeReady())) {
+      this.logger.warn("getDatabaseState: Excel not available");
+      return { hasDatabase: false, hasData: false, missingRequiredTables: [...requiredTables] };
+    }
+
+    const existing = await this.tryLoadFromWorkbook();
+    const hasDatabase = Boolean(existing);
+    const missingRequiredTables = existing
+      ? this.getMissingTables(existing, requiredTables)
+      : [...requiredTables];
+    const hasData = existing ? this.hasUserData(existing) : false;
+
+    if (existing && !this.db) {
+      // Cache the loaded database for subsequent operations.
+      this.db = existing;
+    }
+
+    this.logger.info(
+      `getDatabaseState: hasDatabase=${hasDatabase} hasData=${hasData} missingTables=${missingRequiredTables.join(",")}`,
+    );
+    return { hasDatabase, hasData, missingRequiredTables };
   }
 
   async seedDatabase(sqlText: string): Promise<void> {
@@ -78,7 +115,7 @@ export class DataService {
 
   async loadOrCreate(): Promise<Database> {
     this.logger.info("loadOrCreate: ensure Excel available and load existing db if present");
-    this.ensureExcelAvailable();
+    await this.ensureExcelReady();
 
     if (!this.db) {
       const existing = await this.tryLoadFromWorkbook();
@@ -110,7 +147,7 @@ export class DataService {
       throw new Error("Database has not been initialized.");
     }
 
-    this.ensureExcelAvailable();
+    await this.ensureExcelReady();
     const payload = this.uint8ArrayToBase64(this.db.export());
     const xml = `<?xml version="1.0" encoding="UTF-8"?><${CUSTOM_XML_ELEMENT}>${payload}</${CUSTOM_XML_ELEMENT}>`;
 
@@ -129,7 +166,7 @@ export class DataService {
   async deleteDatabase(): Promise<void> {
     this.logger.info("deleteDatabase: clearing in-memory db and removing customXml part");
     this.db = undefined;
-    this.ensureExcelAvailable();
+    await this.ensureExcelReady();
 
     await Excel.run(async (context) => {
       const existingPart = await this.findDataPart(context);
@@ -142,7 +179,7 @@ export class DataService {
 
   private async tryLoadFromWorkbook(): Promise<Database | null> {
     this.logger.debug("tryLoadFromWorkbook: checking for existing customXml database");
-    if (!this.isExcelAvailable()) {
+    if (!(await this.waitForOfficeReady())) {
       this.logger.warn("tryLoadFromWorkbook: Excel not available");
       return null;
     }
@@ -188,6 +225,181 @@ export class DataService {
     return new sql.Database();
   }
 
+  private hasUserData(database: Database): boolean {
+    const tables = this.getUserTables(database);
+    for (const table of tables) {
+      try {
+        const result = database.exec(`SELECT EXISTS(SELECT 1 FROM "${table}" LIMIT 1) AS hasData;`);
+        const value = result?.[0]?.values?.[0]?.[0];
+        if (value === 1 || value === true) {
+          return true;
+        }
+      } catch (error) {
+        this.logger.warn(`hasUserData: failed to check table ${table}`, error);
+      }
+    }
+
+    return false;
+  }
+
+  private getMissingTables(database: Database, requiredTables: string[]): string[] {
+    const existingTables = this.getUserTables(database).map((name) => name.toLowerCase());
+    return requiredTables.filter((table) => !existingTables.includes(table.toLowerCase()));
+  }
+
+  async saveFilePart(fileName: string, base64Payload: string): Promise<{ xmlPartName: string; createdUtc: string }> {
+    this.logger.info(`saveFilePart: saving file ${fileName} to customXml`);
+    await this.ensureExcelReady();
+
+    const xmlPartName = this.createDataFileElementName(fileName);
+    const createdUtc = new Date().toISOString();
+    const xml = `<?xml version="1.0" encoding="UTF-8"?><${xmlPartName} name="${this.escapeXmlAttribute(
+      fileName,
+    )}" created="${this.escapeXmlAttribute(createdUtc)}">${base64Payload}</${xmlPartName}>`;
+
+    await Excel.run(async (context) => {
+      context.workbook.customXmlParts.add(xml);
+      await context.sync();
+    });
+
+    this.logger.info(`saveFilePart: saved ${fileName} to customXml with element ${xmlPartName}`);
+    return { xmlPartName, createdUtc };
+  }
+
+  async recordDataFile(record: DataFileRecord): Promise<void> {
+    this.logger.info(`recordDataFile: recording file ${record.fileName} in database`);
+    const database = await this.loadOrCreate();
+    this.ensureDataFilesTable(database);
+    database.run(
+      `INSERT OR REPLACE INTO DataFiles
+        (FileName, XmlPartName, RawFileSize, CompressedFileSize, CreatedUtc)
+      VALUES (?, ?, ?, ?, ?);`,
+      [
+        record.fileName,
+        record.xmlPartName,
+        record.rawFileSize,
+        record.compressedFileSize,
+        record.createdUtc,
+      ],
+    );
+    await this.saveDatabase();
+  }
+
+  async deleteDataFile(xmlPartName: string): Promise<void> {
+    this.logger.info(`deleteDataFile: removing xml part ${xmlPartName} and record`);
+    await this.ensureExcelReady();
+
+    // Delete the customXml part
+    await Excel.run(async (context) => {
+      const parts = context.workbook.customXmlParts;
+      parts.load("items");
+      await context.sync();
+
+      const xmlResults = parts.items.map((part) => part.getXml());
+      await context.sync();
+
+      for (let i = 0; i < parts.items.length; i += 1) {
+        const xml = xmlResults[i].value ?? "";
+        if (xml.includes(`<${xmlPartName}`)) {
+          parts.items[i].delete();
+          break;
+        }
+      }
+      await context.sync();
+    });
+
+    // Delete the database record
+    const database = await this.loadOrCreate();
+    this.ensureDataFilesTable(database);
+    database.run(`DELETE FROM DataFiles WHERE XmlPartName = ?;`, [xmlPartName]);
+    await this.saveDatabase();
+    this.logger.info(`deleteDataFile: removed xml part and record for ${xmlPartName}`);
+  }
+
+  async getDataFiles(): Promise<DataFileRecord[]> {
+    this.logger.info("getDataFiles: loading stored data files");
+    const database = await this.loadOrCreate();
+    this.ensureDataFilesTable(database);
+
+    try {
+      const result = database.exec(
+        `SELECT FileName, XmlPartName, RawFileSize, CompressedFileSize, CreatedUtc
+         FROM DataFiles
+         ORDER BY datetime(CreatedUtc) DESC;`,
+      );
+      const rows = result?.[0]?.values ?? [];
+      return rows.map((row) => ({
+        fileName: String(row[0]),
+        xmlPartName: String(row[1]),
+        rawFileSize: Number(row[2]),
+        compressedFileSize: Number(row[3]),
+        createdUtc: String(row[4]),
+      }));
+    } catch (error) {
+      this.logger.error("getDataFiles: failed to query DataFiles", error);
+      return [];
+    }
+  }
+
+  async loadFilePart(xmlPartName: string): Promise<string | null> {
+    this.logger.info(`loadFilePart: loading customXml part ${xmlPartName}`);
+    await this.ensureExcelReady();
+
+    let payload: string | null = null;
+
+    await Excel.run(async (context) => {
+      const parts = context.workbook.customXmlParts;
+      parts.load("items");
+      await context.sync();
+
+      const xmlResults = parts.items.map((part) => part.getXml());
+      await context.sync();
+
+      for (let i = 0; i < parts.items.length; i += 1) {
+        const xml = xmlResults[i].value ?? "";
+        if (xml.includes(`<${xmlPartName}`)) {
+          payload = this.extractBase64(xml, xmlPartName);
+          if (payload) {
+            break;
+          }
+        }
+      }
+    });
+
+    return payload;
+  }
+
+  private ensureDataFilesTable(database: Database): void {
+    database.run(
+      `CREATE TABLE IF NOT EXISTS DataFiles (
+        DataFileID          INTEGER PRIMARY KEY AUTOINCREMENT,
+        FileName            TEXT NOT NULL,
+        XmlPartName         TEXT NOT NULL,
+        RawFileSize         INTEGER NOT NULL,
+        CompressedFileSize  INTEGER NOT NULL,
+        CreatedUtc          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        UNIQUE (FileName),
+        CHECK (length(trim(FileName)) > 0),
+        CHECK (length(trim(XmlPartName)) > 0),
+        CHECK (RawFileSize >= 0),
+        CHECK (CompressedFileSize >= 0)
+      );`,
+    );
+    database.run(`CREATE INDEX IF NOT EXISTS IX_DataFiles_XmlPartName ON DataFiles(XmlPartName);`);
+  }
+
+  private getUserTables(database: Database): string[] {
+    try {
+      const result = database.exec(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
+      );
+      return result?.[0]?.values?.map((row) => String(row[0])) ?? [];
+    } catch (error) {
+      this.logger.warn("getUserTables: failed to list user tables", error);
+      return [];
+    }
+  }
+
   private async findDataPart(context: Excel.RequestContext): Promise<Excel.CustomXmlPart | null> {
     this.logger.debug("findDataPart: searching customXml parts for proofPanelData");
     const parts = context.workbook.customXmlParts;
@@ -228,14 +440,39 @@ export class DataService {
     }
   }
 
+  private async waitForOfficeReady(): Promise<boolean> {
+    if (!this.officeReadyPromise) {
+      if (typeof Office === "undefined" || !Office.onReady) {
+        return false;
+      }
+      this.officeReadyPromise = Office.onReady();
+    }
+
+    try {
+      await this.officeReadyPromise;
+      return true;
+    } catch (error) {
+      this.logger.error("waitForOfficeReady: Office.onReady failed", error);
+      this.officeReadyPromise = undefined;
+      return false;
+    }
+  }
+
+  private async ensureExcelReady(): Promise<void> {
+    const ready = await this.waitForOfficeReady();
+    if (!ready || !this.isExcelAvailable()) {
+      throw new Error("Excel is not available. Connect to Excel before accessing the database.");
+    }
+  }
+
   private isExcelAvailable(): boolean {
     this.logger.debug("isExcelAvailable: checking Excel global");
     return typeof Excel !== "undefined";
   }
 
-  private extractBase64(xml: string): string | null {
+  private extractBase64(xml: string, elementName: string = CUSTOM_XML_ELEMENT): string | null {
     this.logger.debug("extractBase64: extracting base64 payload from XML");
-    const match = new RegExp(`<${CUSTOM_XML_ELEMENT}>([^<]*)</${CUSTOM_XML_ELEMENT}>`).exec(xml);
+    const match = new RegExp(`<${elementName}[^>]*>([^<]*)</${elementName}>`).exec(xml);
     return match?.[1]?.trim() || null;
   }
 
@@ -256,5 +493,18 @@ export class DataService {
       buffer[i] = binary.charCodeAt(i);
     }
     return buffer;
+  }
+
+  private createDataFileElementName(fileName: string): string {
+    const safeName = fileName
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase() || "file";
+    const suffix = Math.random().toString(36).slice(2, 8);
+    return `${DATA_FILE_ELEMENT_PREFIX}-${safeName}-${suffix}`;
+  }
+
+  private escapeXmlAttribute(value: string): string {
+    return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 }

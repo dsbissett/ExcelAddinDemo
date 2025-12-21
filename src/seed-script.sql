@@ -56,6 +56,27 @@ CREATE TEMP TABLE RawJson (
 );
 
 -- =====================================================
+-- 5.5 Table for file data
+-- =====================================================
+CREATE TABLE DataFiles (
+    DataFileID          INTEGER PRIMARY KEY AUTOINCREMENT,
+    FileName            TEXT NOT NULL,
+    XmlPartName         TEXT NOT NULL,
+    RawFileSize         INTEGER NOT NULL,
+    CompressedFileSize  INTEGER NOT NULL,
+    CreatedUtc          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+
+    UNIQUE (FileName),
+
+    CHECK (length(trim(FileName)) > 0),
+    CHECK (length(trim(XmlPartName)) > 0),
+    CHECK (RawFileSize >= 0),
+    CHECK (CompressedFileSize >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS IX_DataFiles_XmlPartName ON DataFiles(XmlPartName);
+
+-- =====================================================
 -- 6. Paste JSON here ONCE
 -- =====================================================
 INSERT INTO RawJson (json) VALUES (

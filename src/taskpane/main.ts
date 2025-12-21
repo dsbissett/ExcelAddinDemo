@@ -2,6 +2,7 @@
 
 import { platformBrowserDynamic } from "@angular/platform-browser-dynamic";
 import { AppModule } from "./app.module";
+import "bootstrap/dist/css/bootstrap.min.css";
 import "./taskpane.css";
 
 const bootstrap = () => {
