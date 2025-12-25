@@ -11,7 +11,10 @@ export interface DataFileRecord {
   fileName: string;
   xmlPartName: string;
   rawFileSize: number;
-  compressedFileSize: number;
+  thumbnailPng: Uint8Array | null;
+  thumbnailWidth: number | null;
+  thumbnailHeight: number | null;
+  thumbnailMimeType: string;
   createdUtc: string;
 }
 
@@ -272,13 +275,16 @@ export class DataService {
     this.ensureDataFilesTable(database);
     database.run(
       `INSERT OR REPLACE INTO DataFiles
-        (FileName, XmlPartName, RawFileSize, CompressedFileSize, CreatedUtc)
-      VALUES (?, ?, ?, ?, ?);`,
+        (FileName, XmlPartName, RawFileSize, ThumbnailPng, ThumbnailWidth, ThumbnailHeight, ThumbnailMimeType, CreatedUtc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         record.fileName,
         record.xmlPartName,
         record.rawFileSize,
-        record.compressedFileSize,
+        record.thumbnailPng,
+        record.thumbnailWidth,
+        record.thumbnailHeight,
+        record.thumbnailMimeType,
         record.createdUtc,
       ],
     );
@@ -323,18 +329,27 @@ export class DataService {
 
     try {
       const result = database.exec(
-        `SELECT FileName, XmlPartName, RawFileSize, CompressedFileSize, CreatedUtc
+        `SELECT FileName, XmlPartName, RawFileSize, ThumbnailPng, ThumbnailWidth, ThumbnailHeight, ThumbnailMimeType, CreatedUtc
          FROM DataFiles
          ORDER BY datetime(CreatedUtc) DESC;`,
       );
       const rows = result?.[0]?.values ?? [];
-      return rows.map((row) => ({
-        fileName: String(row[0]),
-        xmlPartName: String(row[1]),
-        rawFileSize: Number(row[2]),
-        compressedFileSize: Number(row[3]),
-        createdUtc: String(row[4]),
-      }));
+      return rows.map((row) => {
+        const mime = row[6];
+        const thumbnailMimeType =
+          typeof mime === "string" && mime.trim() ? mime : "image/png";
+        const thumbnailPng = row[3] instanceof Uint8Array ? (row[3] as Uint8Array) : null;
+        return {
+          fileName: String(row[0]),
+          xmlPartName: String(row[1]),
+          rawFileSize: Number(row[2]),
+          thumbnailPng,
+          thumbnailWidth: row[4] !== null ? Number(row[4]) : null,
+          thumbnailHeight: row[5] !== null ? Number(row[5]) : null,
+          thumbnailMimeType,
+          createdUtc: String(row[7]),
+        };
+      });
     } catch (error) {
       this.logger.error("getDataFiles: failed to query DataFiles", error);
       return [];
@@ -376,13 +391,17 @@ export class DataService {
         FileName            TEXT NOT NULL,
         XmlPartName         TEXT NOT NULL,
         RawFileSize         INTEGER NOT NULL,
-        CompressedFileSize  INTEGER NOT NULL,
+        ThumbnailPng        BLOB NULL,
+        ThumbnailWidth      INTEGER NULL,
+        ThumbnailHeight     INTEGER NULL,
+        ThumbnailMimeType   TEXT NOT NULL DEFAULT 'image/png',
         CreatedUtc          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         UNIQUE (FileName),
         CHECK (length(trim(FileName)) > 0),
         CHECK (length(trim(XmlPartName)) > 0),
         CHECK (RawFileSize >= 0),
-        CHECK (CompressedFileSize >= 0)
+        CHECK (ThumbnailWidth IS NULL OR ThumbnailWidth > 0),
+        CHECK (ThumbnailHeight IS NULL OR ThumbnailHeight > 0)
       );`,
     );
     database.run(`CREATE INDEX IF NOT EXISTS IX_DataFiles_XmlPartName ON DataFiles(XmlPartName);`);

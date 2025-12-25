@@ -4,7 +4,7 @@ import { Component, NgZone } from "@angular/core";
 import { NGXLogger } from "ngx-logger";
 import { DataService } from "./services/data.service";
 import { sql } from "@codemirror/lang-sql";
-import brotliModulePromise from "brotli-wasm";
+// import brotliModulePromise from "brotli-wasm";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 const pdfWorkerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 import seedScript from "../seed-script.sql";
@@ -16,7 +16,6 @@ interface UploadItem {
   status: UploadStatus;
   progress: number;
   rawFileSize?: number;
-  compressedFileSize?: number;
   xmlPartName?: string;
   createdUtc?: string;
   isDeleting?: boolean;
@@ -27,7 +26,17 @@ interface PdfThumbnail {
   xmlPartName: string;
   createdUtc?: string;
   imageUrl: string;
+  width?: number;
+  height?: number;
 }
+
+type ThumbnailResult = {
+  imageUrl: string;
+  pngBytes: Uint8Array;
+  width: number;
+  height: number;
+  mimeType: string;
+};
 
 @Component({
   selector: "app-root",
@@ -45,7 +54,7 @@ export class AppComponent {
   hasData = false;
   readonly requiredTables = ["Pages", "Cells", "PolygonData"];
   missingRequiredTables: string[] = [...this.requiredTables];
-  private brotliInstance?: any;
+  // private brotliInstance?: any;
   private readonly seedDisplayQuery = `SELECT
     p.PageKey,
     p.PdfPageNumber,
@@ -304,39 +313,39 @@ ORDER BY
       throw new Error("No file content available for upload.");
     }
 
-    const rawFileSize = upload.file.size;
+    const buffer = await upload.file.arrayBuffer();
+    const pdfBytes = new Uint8Array(buffer);
+    const rawFileSize = pdfBytes.byteLength;
     upload.rawFileSize = rawFileSize;
     this.updateUploadProgress(upload, 1, totalSteps);
 
-    // 2. Compress the file using brotli
-    const buffer = await upload.file.arrayBuffer();
-    const compressedBytes = await this.compressWithBrotli(new Uint8Array(buffer));
+    // 2. Render and capture a thumbnail to persist alongside the PDF
+    const thumbnail = await this.renderPdfThumbnail(pdfBytes);
     this.updateUploadProgress(upload, 2, totalSteps);
 
-    // 3. Stringify the file
-    const base64Payload = this.bytesToBase64(compressedBytes);
+    // 3. Stringify the file for storage in customXml
+    const base64Payload = this.bytesToBase64(pdfBytes);
     this.updateUploadProgress(upload, 3, totalSteps);
 
-    // 4. Get the compressed file size
-    const compressedFileSize = compressedBytes.byteLength;
-    upload.compressedFileSize = compressedFileSize;
-    this.updateUploadProgress(upload, 4, totalSteps);
-
-    // 5. Save the stringified file as a customXml part in the Excel document
+    // 4. Save the stringified file as a customXml part in the Excel document
     const { xmlPartName, createdUtc } = await this.dataService.saveFilePart(upload.fileName, base64Payload);
     upload.xmlPartName = xmlPartName;
     upload.createdUtc = createdUtc;
-    this.updateUploadProgress(upload, 5, totalSteps);
+    this.updateUploadProgress(upload, 4, totalSteps);
 
-    // 6. Create an entry in the DataFiles table
+    // 5. Create an entry in the DataFiles table (including thumbnail)
     await this.dataService.recordDataFile({
       fileName: upload.fileName,
       xmlPartName,
       rawFileSize,
-      compressedFileSize,
+      thumbnailPng: thumbnail.pngBytes,
+      thumbnailWidth: thumbnail.width,
+      thumbnailHeight: thumbnail.height,
+      thumbnailMimeType: thumbnail.mimeType,
       createdUtc,
     });
 
+    this.updateUploadProgress(upload, 5, totalSteps);
     this.updateUploadProgress(upload, totalSteps, totalSteps, "Complete");
     this.zone.run(() => {
       this.hasDatabase = true;
@@ -375,7 +384,7 @@ ORDER BY
     return bytes;
   }
 
-  private async renderPdfThumbnail(pdfBytes: Uint8Array): Promise<string> {
+  private async renderPdfThumbnail(pdfBytes: Uint8Array): Promise<ThumbnailResult> {
     const loadingTask = getDocument({ data: pdfBytes });
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
@@ -394,26 +403,34 @@ ORDER BY
 
     await page.render({ canvasContext: context, viewport, canvas }).promise;
     const dataUrl = canvas.toDataURL("image/png");
+    const [, base64Image = ""] = dataUrl.split(",");
+    const pngBytes = base64Image ? this.base64ToBytes(base64Image) : new Uint8Array();
     pdf.destroy();
-    return dataUrl;
+    return {
+      imageUrl: dataUrl,
+      pngBytes,
+      width: canvas.width,
+      height: canvas.height,
+      mimeType: "image/png",
+    };
   }
 
-  private async compressWithBrotli(input: Uint8Array): Promise<Uint8Array> {
-    const brotli = await this.ensureBrotli();
-    return brotli.compress(input);
-  }
+  // private async compressWithBrotli(input: Uint8Array): Promise<Uint8Array> {
+  //   const brotli = await this.ensureBrotli();
+  //   return brotli.compress(input);
+  // }
 
-  private async decompressWithBrotli(input: Uint8Array): Promise<Uint8Array> {
-    const brotli = await this.ensureBrotli();
-    return brotli.decompress(input);
-  }
+  // private async decompressWithBrotli(input: Uint8Array): Promise<Uint8Array> {
+  //   const brotli = await this.ensureBrotli();
+  //   return brotli.decompress(input);
+  // }
 
-  private async ensureBrotli(): Promise<any> {
-    if (!this.brotliInstance) {
-      this.brotliInstance = await (brotliModulePromise as unknown as Promise<any>);
-    }
-    return this.brotliInstance;
-  }
+  // private async ensureBrotli(): Promise<any> {
+  //   if (!this.brotliInstance) {
+  //     this.brotliInstance = await (brotliModulePromise as unknown as Promise<any>);
+  //   }
+  //   return this.brotliInstance;
+  // }
 
   async deleteUpload(upload: UploadItem): Promise<void> {
     if (!this.isReady) {
@@ -499,7 +516,6 @@ ORDER BY
             existingItem.progress = 100;
             existingItem.fileName = record.fileName;
             existingItem.rawFileSize = record.rawFileSize;
-            existingItem.compressedFileSize = record.compressedFileSize;
             existingItem.createdUtc = record.createdUtc;
           } else {
             updated.set(record.xmlPartName, {
@@ -507,7 +523,6 @@ ORDER BY
               status: "Complete",
               progress: 100,
               rawFileSize: record.rawFileSize,
-              compressedFileSize: record.compressedFileSize,
               xmlPartName: record.xmlPartName,
               createdUtc: record.createdUtc,
             });
@@ -544,18 +559,37 @@ ORDER BY
       });
 
       for (const record of records) {
-        const payloadBase64 = await this.dataService.loadFilePart(record.xmlPartName);
-        if (!payloadBase64) {
+        let imageUrl: string | null = null;
+        let thumbWidth = record.thumbnailWidth ?? undefined;
+        let thumbHeight = record.thumbnailHeight ?? undefined;
+
+        if (record.thumbnailPng && record.thumbnailPng.length) {
+          const mimeType = record.thumbnailMimeType || "image/png";
+          const base64Thumb = this.bytesToBase64(new Uint8Array(record.thumbnailPng));
+          imageUrl = `data:${mimeType};base64,${base64Thumb}`;
+        } else {
+          const payloadBase64 = await this.dataService.loadFilePart(record.xmlPartName);
+          if (!payloadBase64) {
+            continue;
+          }
+          const pdfBytes = this.base64ToBytes(payloadBase64); // Files are stored uncompressed
+          const thumbnail = await this.renderPdfThumbnail(pdfBytes);
+          imageUrl = thumbnail.imageUrl;
+          thumbWidth = thumbnail.width;
+          thumbHeight = thumbnail.height;
+        }
+
+        if (!imageUrl) {
           continue;
         }
-        const compressedBytes = this.base64ToBytes(payloadBase64);
-        const pdfBytes = await this.decompressWithBrotli(compressedBytes);
-        const imageUrl = await this.renderPdfThumbnail(pdfBytes);
+
         thumbnails.push({
           fileName: record.fileName,
           xmlPartName: record.xmlPartName,
           createdUtc: record.createdUtc,
           imageUrl,
+          width: thumbWidth,
+          height: thumbHeight,
         });
       }
 

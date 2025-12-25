@@ -62,17 +62,43 @@ CREATE TABLE DataFiles (
     DataFileID          INTEGER PRIMARY KEY AUTOINCREMENT,
     FileName            TEXT NOT NULL,
     XmlPartName         TEXT NOT NULL,
+
+    -- Original PDF size (no compression anymore)
     RawFileSize         INTEGER NOT NULL,
-    CompressedFileSize  INTEGER NOT NULL,
-    CreatedUtc          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+
+    -- Thumbnail storage (PNG)
+    ThumbnailPng        BLOB NULL,
+    ThumbnailWidth      INTEGER NULL,
+    ThumbnailHeight     INTEGER NULL,
+    ThumbnailMimeType   TEXT NOT NULL DEFAULT 'image/png',
+
+    CreatedUtc          TEXT NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 
     UNIQUE (FileName),
 
     CHECK (length(trim(FileName)) > 0),
     CHECK (length(trim(XmlPartName)) > 0),
     CHECK (RawFileSize >= 0),
-    CHECK (CompressedFileSize >= 0)
+    CHECK (ThumbnailWidth IS NULL OR ThumbnailWidth > 0),
+    CHECK (ThumbnailHeight IS NULL OR ThumbnailHeight > 0)
 );
+
+-- CREATE TABLE DataFiles (
+--     DataFileID          INTEGER PRIMARY KEY AUTOINCREMENT,
+--     FileName            TEXT NOT NULL,
+--     XmlPartName         TEXT NOT NULL,
+--     RawFileSize         INTEGER NOT NULL,
+--     CompressedFileSize  INTEGER NOT NULL,
+--     CreatedUtc          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+
+--     UNIQUE (FileName),
+
+--     CHECK (length(trim(FileName)) > 0),
+--     CHECK (length(trim(XmlPartName)) > 0),
+--     CHECK (RawFileSize >= 0),
+--     CHECK (CompressedFileSize >= 0)
+-- );
 
 CREATE INDEX IF NOT EXISTS IX_DataFiles_XmlPartName ON DataFiles(XmlPartName);
 
