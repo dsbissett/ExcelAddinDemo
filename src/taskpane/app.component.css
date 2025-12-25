@@ -114,3 +114,99 @@
   object-fit: contain;
   background: #f8f9fa;
 }
+
+.pdf-viewer-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.pdf-viewer-modal .modal-dialog {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+}
+
+.pdf-viewer-modal .modal-content {
+  height: 100%;
+  background: #0d0d0d;
+  color: #f8f9fa;
+  border: none;
+  border-radius: 0;
+}
+
+.pdf-viewer-modal .modal-header,
+.pdf-viewer-modal .modal-title,
+.pdf-modal-loading,
+.pdf-modal-error,
+.pdf-modal-pages {
+  color: #f8f9fa !important;
+}
+
+.pdf-viewer-modal .modal-header,
+.pdf-viewer-modal .modal-title {
+  color: #f8f9fa;
+}
+
+.pdf-viewer-modal .modal-body {
+  color: #f8f9fa;
+}
+
+.pdf-viewer-modal .modal-body {
+  background: #111;
+  color: #f8f9fa;
+}
+
+.pdf-modal-pages {
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  padding: 16px;
+  background: #1b1b1b;
+}
+
+.pdf-modal-page {
+  background: #222;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.pdf-modal-image {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.pdf-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 1999;
+}
+
+.pdf-modal-loading,
+.pdf-modal-error {
+  color: #f8f9fa;
+}
+
+.pdf-modal-error {
+  color: #ffb3b3;
+}
+
+.pdf-viewer-modal .btn-close {
+  filter: invert(1);
+  opacity: 0.85;
+}
+
+.pdf-viewer-modal .btn-close:hover,
+.pdf-viewer-modal .btn-close:focus {
+  opacity: 1;
+}

@@ -28,6 +28,7 @@ interface PdfThumbnail {
   imageUrl: string;
   width?: number;
   height?: number;
+  pdfBase64?: string;
 }
 
 type ThumbnailResult = {
@@ -36,6 +37,13 @@ type ThumbnailResult = {
   width: number;
   height: number;
   mimeType: string;
+};
+
+type ModalPage = {
+  src: string;
+  width: number;
+  height: number;
+  pageNumber: number;
 };
 
 @Component({
@@ -92,6 +100,14 @@ ORDER BY
   readonly uploadSteps = 6;
   uploads: UploadItem[] = [];
   pdfThumbnails: PdfThumbnail[] = [];
+  showPdfModal = false;
+  selectedPdfName = "";
+  selectedPdfUrl: string | null = null;
+  isOpeningPdf = false;
+  isPdfModalLoading = false;
+  pdfModalPages: ModalPage[] = [];
+  pdfModalError: string | null = null;
+  pdfModalProgress: number | null = null;
 
   get canSeedDatabase(): boolean {
     const missingAllRequiredTables = this.requiredTables.every((table) =>
@@ -314,20 +330,20 @@ ORDER BY
     }
 
     const buffer = await upload.file.arrayBuffer();
-    const pdfBytes = new Uint8Array(buffer);
+    const pdfBytes = new Uint8Array(buffer.slice(0));
     const rawFileSize = pdfBytes.byteLength;
     upload.rawFileSize = rawFileSize;
     this.updateUploadProgress(upload, 1, totalSteps);
 
-    // 2. Render and capture a thumbnail to persist alongside the PDF
-    const thumbnail = await this.renderPdfThumbnail(pdfBytes);
+    // 2. Render and capture a thumbnail to persist alongside the PDF (use a copy so the original buffer stays intact)
+    const thumbnail = await this.renderPdfThumbnail(new Uint8Array(pdfBytes));
     this.updateUploadProgress(upload, 2, totalSteps);
 
-    // 3. Stringify the file for storage in customXml
+    // 3. Base64 encode the PDF for storage (using the untouched original buffer)
     const base64Payload = this.bytesToBase64(pdfBytes);
     this.updateUploadProgress(upload, 3, totalSteps);
 
-    // 4. Save the stringified file as a customXml part in the Excel document
+    // 4. Save the file as a customXml part in the Excel document
     const { xmlPartName, createdUtc } = await this.dataService.saveFilePart(upload.fileName, base64Payload);
     upload.xmlPartName = xmlPartName;
     upload.createdUtc = createdUtc;
@@ -413,6 +429,160 @@ ORDER BY
       height: canvas.height,
       mimeType: "image/png",
     };
+  }
+
+  async openPdfFromThumbnail(thumb: PdfThumbnail): Promise<void> {
+    if (!this.isReady || !this.isExcelHost) {
+      this.statusMessage = "Connect to Excel to view PDFs.";
+      return;
+    }
+    if (this.isOpeningPdf) {
+      return;
+    }
+
+    this.isOpeningPdf = true;
+    this.zone.run(() => {
+      this.showPdfModal = true;
+      this.selectedPdfName = thumb.fileName;
+      this.isPdfModalLoading = true;
+      this.pdfModalError = null;
+      this.pdfModalPages = [];
+      this.pdfModalProgress = 0;
+    });
+    try {
+      const payloadBase64 =
+        thumb.pdfBase64 ?? (await this.dataService.loadFilePart(thumb.xmlPartName)) ?? undefined;
+      if (!payloadBase64) {
+        this.zone.run(() => {
+          const message = "Unable to load PDF content from workbook.";
+          this.statusMessage = message;
+          this.pdfModalError = message;
+          this.isPdfModalLoading = false;
+          this.pdfModalProgress = null;
+        });
+        return;
+      }
+
+      const pdfBytes = this.base64ToBytes(payloadBase64);
+      this.revokePdfUrl();
+      const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+
+      await this.renderPdfForModal(pdfBytes);
+
+      this.zone.run(() => {
+        this.selectedPdfUrl = url;
+        this.isPdfModalLoading = false;
+        this.pdfModalProgress = null;
+      });
+    } catch (error) {
+      this.logger.error("Failed to open PDF", error);
+      this.zone.run(() => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.pdfModalError = `Unable to open PDF: ${message}`;
+        this.statusMessage = this.pdfModalError;
+        this.isPdfModalLoading = false;
+        this.pdfModalProgress = null;
+        this.showPdfModal = true;
+      });
+    } finally {
+      this.zone.run(() => {
+        this.isOpeningPdf = false;
+        if (!this.pdfModalError) {
+          this.isPdfModalLoading = false;
+        }
+      });
+    }
+  }
+
+  closePdfModal(): void {
+    this.revokePdfUrl();
+    this.zone.run(() => {
+      this.showPdfModal = false;
+      this.selectedPdfName = "";
+      this.isPdfModalLoading = false;
+      this.pdfModalError = null;
+      this.pdfModalPages = [];
+      this.pdfModalProgress = null;
+    });
+  }
+
+  private revokePdfUrl(): void {
+    if (this.selectedPdfUrl) {
+      URL.revokeObjectURL(this.selectedPdfUrl);
+    }
+    this.selectedPdfUrl = null;
+  }
+
+  private async renderPdfForModal(pdfBytes: Uint8Array): Promise<void> {
+    const loadingTask = getDocument({ data: pdfBytes });
+    let downloadProgress = 0;
+    let renderProgress = 0;
+    loadingTask.onProgress = (progressData) => {
+      const percent =
+        progressData.total && progressData.total > 0
+          ? Math.round((progressData.loaded / progressData.total) * 100)
+          : null;
+      this.zone.run(() => {
+        downloadProgress = percent ?? downloadProgress;
+        const effective =
+          renderProgress === 0
+            ? Math.min(downloadProgress, 99) // avoid flashing 100% before render starts
+            : Math.min(downloadProgress || 100, renderProgress);
+        this.pdfModalProgress = effective;
+      });
+    };
+    const pages: ModalPage[] = [];
+    let pdf: any;
+    try {
+      pdf = await loadingTask.promise;
+      const targetWidth = 1100;
+
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, targetWidth / baseViewport.width);
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          throw new Error("Unable to render PDF page.");
+        }
+
+        await page.render({ canvasContext: context, viewport, canvas }).promise;
+        const dataUrl = canvas.toDataURL("image/png");
+        pages.push({
+          src: dataUrl,
+          width: canvas.width,
+          height: canvas.height,
+          pageNumber,
+        });
+
+        renderProgress = Math.round((pageNumber / pdf.numPages) * 100);
+        this.zone.run(() => {
+          const effective = Math.min(downloadProgress || 100, renderProgress);
+          this.pdfModalProgress = effective;
+        });
+      }
+
+      this.zone.run(() => {
+        this.pdfModalPages = pages;
+        this.pdfModalProgress = 100;
+      });
+    } catch (error) {
+      this.logger.error("renderPdfForModal: failed to render PDF", error);
+      this.zone.run(() => {
+        this.pdfModalError =
+          error instanceof Error ? `Unable to render PDF: ${error.message}` : "Unable to render PDF.";
+        this.isPdfModalLoading = false;
+        this.pdfModalProgress = null;
+      });
+    } finally {
+      pdf?.destroy?.();
+    }
   }
 
   // private async compressWithBrotli(input: Uint8Array): Promise<Uint8Array> {
@@ -562,11 +732,13 @@ ORDER BY
         let imageUrl: string | null = null;
         let thumbWidth = record.thumbnailWidth ?? undefined;
         let thumbHeight = record.thumbnailHeight ?? undefined;
+        let pdfBase64: string | undefined;
 
         if (record.thumbnailPng && record.thumbnailPng.length) {
           const mimeType = record.thumbnailMimeType || "image/png";
           const base64Thumb = this.bytesToBase64(new Uint8Array(record.thumbnailPng));
           imageUrl = `data:${mimeType};base64,${base64Thumb}`;
+          pdfBase64 = await this.dataService.loadFilePart(record.xmlPartName) ?? undefined;
         } else {
           const payloadBase64 = await this.dataService.loadFilePart(record.xmlPartName);
           if (!payloadBase64) {
@@ -577,6 +749,7 @@ ORDER BY
           imageUrl = thumbnail.imageUrl;
           thumbWidth = thumbnail.width;
           thumbHeight = thumbnail.height;
+          pdfBase64 = payloadBase64;
         }
 
         if (!imageUrl) {
@@ -590,6 +763,7 @@ ORDER BY
           imageUrl,
           width: thumbWidth,
           height: thumbHeight,
+          pdfBase64,
         });
       }
 

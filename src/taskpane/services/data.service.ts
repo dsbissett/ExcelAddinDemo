@@ -250,10 +250,15 @@ export class DataService {
     return requiredTables.filter((table) => !existingTables.includes(table.toLowerCase()));
   }
 
-  async saveFilePart(fileName: string, base64Payload: string): Promise<{ xmlPartName: string; createdUtc: string }> {
+  async saveFilePart(
+    fileName: string,
+    payload: Uint8Array | string,
+  ): Promise<{ xmlPartName: string; createdUtc: string }> {
     this.logger.info(`saveFilePart: saving file ${fileName} to customXml`);
     await this.ensureExcelReady();
 
+    const base64Payload =
+      payload instanceof Uint8Array ? this.uint8ArrayToBase64(payload) : String(payload).trim();
     const xmlPartName = this.createDataFileElementName(fileName);
     const createdUtc = new Date().toISOString();
     const xml = `<?xml version="1.0" encoding="UTF-8"?><${xmlPartName} name="${this.escapeXmlAttribute(
@@ -361,6 +366,7 @@ export class DataService {
     await this.ensureExcelReady();
 
     let payload: string | null = null;
+    let matchedXml: string | null = null;
 
     await Excel.run(async (context) => {
       const parts = context.workbook.customXmlParts;
@@ -373,6 +379,7 @@ export class DataService {
       for (let i = 0; i < parts.items.length; i += 1) {
         const xml = xmlResults[i].value ?? "";
         if (xml.includes(`<${xmlPartName}`)) {
+          matchedXml = xml;
           payload = this.extractBase64(xml, xmlPartName);
           if (payload) {
             break;
@@ -380,6 +387,20 @@ export class DataService {
         }
       }
     });
+
+    if (!payload && matchedXml) {
+      const decodedXml = this.tryDecodeBase64Xml(matchedXml);
+      if (decodedXml) {
+        payload = this.extractBase64(decodedXml, xmlPartName);
+        if (!payload) {
+          this.logger.warn(`loadFilePart: decoded base64 xml but still no payload for ${xmlPartName}`);
+        }
+      }
+    }
+
+    if (!payload) {
+      this.logger.warn(`loadFilePart: no payload found for ${xmlPartName}`);
+    }
 
     return payload;
   }
@@ -491,16 +512,65 @@ export class DataService {
 
   private extractBase64(xml: string, elementName: string = CUSTOM_XML_ELEMENT): string | null {
     this.logger.debug("extractBase64: extracting base64 payload from XML");
-    const match = new RegExp(`<${elementName}[^>]*>([^<]*)</${elementName}>`).exec(xml);
-    return match?.[1]?.trim() || null;
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xml, "application/xml");
+      const parserError = doc.querySelector("parsererror");
+      if (parserError) {
+        this.logger.warn("extractBase64: XML parse error, falling back to string search");
+      } else {
+        const byName = doc.querySelector(elementName);
+        const payload = (byName ?? doc.documentElement)?.textContent?.trim() ?? "";
+        if (payload) {
+          return payload;
+        }
+      }
+    } catch (error) {
+      this.logger.warn("extractBase64: DOMParser failed, falling back to string search", error);
+    }
+
+    const openTag = `<${elementName}`;
+    const start = xml.indexOf(openTag);
+    if (start === -1) {
+      return null;
+    }
+    const startContent = xml.indexOf(">", start);
+    const end = xml.indexOf(`</${elementName}>`, startContent);
+    if (startContent === -1 || end === -1 || end <= startContent) {
+      return null;
+    }
+    const payload = xml.slice(startContent + 1, end).trim();
+    return payload || null;
+  }
+
+  private tryDecodeBase64Xml(input: string): string | null {
+    const trimmed = input.trim();
+    // If it already looks like XML, don't attempt base64 decode.
+    if (!trimmed || trimmed.includes("<")) {
+      return null;
+    }
+
+    try {
+      const decoded = atob(trimmed);
+      if (decoded.includes("<")) {
+        this.logger.debug("tryDecodeBase64Xml: decoded xml from base64 wrapper");
+        return decoded;
+      }
+    } catch (error) {
+      this.logger.debug("tryDecodeBase64Xml: base64 decode failed", error);
+    }
+
+    return null;
   }
 
   private uint8ArrayToBase64(bytes: Uint8Array): string {
     this.logger.debug("uint8ArrayToBase64: converting bytes to base64");
+    const chunkSize = 0x8000;
     let binary = "";
-    bytes.forEach((b) => {
-      binary += String.fromCharCode(b);
-    });
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
     return btoa(binary);
   }
 

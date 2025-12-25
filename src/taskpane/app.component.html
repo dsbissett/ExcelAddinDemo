@@ -243,8 +243,18 @@
       <div class="card shadow-sm">
         <div class="card-header fw-semibold">Pdf Viewer</div>
         <div class="card-body">
-          <div *ngIf="isLoadingThumbnails" class="text-muted">
-            Loading PDFs...
+          <div *ngIf="isLoadingThumbnails" class="pdf-loading-status">
+            <div class="fw-semibold mb-2 text-muted">Loading PDFs...</div>
+            <div class="progress" aria-label="PDF thumbnails loading">
+              <div
+                class="progress-bar progress-bar-striped progress-bar-animated"
+                role="progressbar"
+                style="width: 100%;"
+                aria-valuenow="100"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              ></div>
+            </div>
           </div>
           <ng-container *ngIf="!isLoadingThumbnails">
             <div
@@ -252,7 +262,15 @@
               *ngIf="pdfThumbnails.length; else noPdfThumbs"
             >
               <div class="col" *ngFor="let thumb of pdfThumbnails">
-                <div class="card h-100 pdf-thumb-card">
+                <div
+                  class="card h-100 pdf-thumb-card"
+                  (dblclick)="openPdfFromThumbnail(thumb)"
+                  tabindex="0"
+                  role="button"
+                  (keyup.enter)="openPdfFromThumbnail(thumb)"
+                  (keyup.space)="openPdfFromThumbnail(thumb)"
+                  [attr.aria-label]="'Open ' + thumb.fileName"
+                >
                   <img
                     class="card-img-top pdf-thumb-image"
                     [src]="thumb.imageUrl"
@@ -277,4 +295,53 @@
       </div>
     </div>
   </div>
+
+  <div
+    class="modal fade show d-block pdf-viewer-modal"
+    tabindex="-1"
+    role="dialog"
+    *ngIf="showPdfModal"
+    aria-modal="true"
+  >
+    <div class="modal-dialog modal-fullscreen">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">{{ selectedPdfName || "PDF" }}</h5>
+          <button type="button" class="btn-close" aria-label="Close" (click)="closePdfModal()"></button>
+        </div>
+        <div class="modal-body p-0">
+          <div
+            *ngIf="isPdfModalLoading && pdfModalProgress !== null && pdfModalProgress < 100"
+            class="p-3 pdf-modal-loading"
+          >
+            <div class="fw-semibold mb-2">Loading PDF...</div>
+            <div class="progress" aria-label="PDF load progress">
+              <div
+                class="progress-bar progress-bar-striped progress-bar-animated"
+                role="progressbar"
+                [style.width.%]="pdfModalProgress"
+                [attr.aria-valuenow]="pdfModalProgress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                {{ pdfModalProgress }}%
+              </div>
+            </div>
+          </div>
+          <div *ngIf="pdfModalError" class="p-3 pdf-modal-error">{{ pdfModalError }}</div>
+          <div *ngIf="!isPdfModalLoading && !pdfModalError" class="pdf-modal-pages">
+            <div class="pdf-modal-page" *ngFor="let page of pdfModalPages">
+              <img
+                class="pdf-modal-image"
+                [src]="page.src"
+                [alt]="selectedPdfName + ' page ' + page.pageNumber"
+                [attr.data-page]="page.pageNumber"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="pdf-modal-backdrop" *ngIf="showPdfModal" (click)="closePdfModal()"></div>
 </div>
