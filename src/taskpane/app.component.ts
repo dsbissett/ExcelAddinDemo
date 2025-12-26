@@ -468,6 +468,10 @@ ORDER BY
       const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
 
+      if (!thumb.pdfBase64) {
+        thumb.pdfBase64 = payloadBase64;
+      }
+
       await this.renderPdfForModal(pdfBytes);
 
       this.zone.run(() => {
@@ -729,41 +733,22 @@ ORDER BY
       });
 
       for (const record of records) {
-        let imageUrl: string | null = null;
-        let thumbWidth = record.thumbnailWidth ?? undefined;
-        let thumbHeight = record.thumbnailHeight ?? undefined;
-        let pdfBase64: string | undefined;
-
-        if (record.thumbnailPng && record.thumbnailPng.length) {
-          const mimeType = record.thumbnailMimeType || "image/png";
-          const base64Thumb = this.bytesToBase64(new Uint8Array(record.thumbnailPng));
-          imageUrl = `data:${mimeType};base64,${base64Thumb}`;
-          pdfBase64 = await this.dataService.loadFilePart(record.xmlPartName) ?? undefined;
-        } else {
-          const payloadBase64 = await this.dataService.loadFilePart(record.xmlPartName);
-          if (!payloadBase64) {
-            continue;
-          }
-          const pdfBytes = this.base64ToBytes(payloadBase64); // Files are stored uncompressed
-          const thumbnail = await this.renderPdfThumbnail(pdfBytes);
-          imageUrl = thumbnail.imageUrl;
-          thumbWidth = thumbnail.width;
-          thumbHeight = thumbnail.height;
-          pdfBase64 = payloadBase64;
-        }
-
-        if (!imageUrl) {
+        const pngBytes = record.thumbnailPng;
+        if (!pngBytes || pngBytes.length === 0) {
+          this.logger.warn(`No thumbnail image stored for ${record.fileName}; skipping.`);
           continue;
         }
+
+        const mimeType = record.thumbnailMimeType || "image/png";
+        const base64Thumb = this.bytesToBase64(new Uint8Array(pngBytes));
 
         thumbnails.push({
           fileName: record.fileName,
           xmlPartName: record.xmlPartName,
           createdUtc: record.createdUtc,
-          imageUrl,
-          width: thumbWidth,
-          height: thumbHeight,
-          pdfBase64,
+          imageUrl: `data:${mimeType};base64,${base64Thumb}`,
+          width: record.thumbnailWidth ?? undefined,
+          height: record.thumbnailHeight ?? undefined,
         });
       }
 
