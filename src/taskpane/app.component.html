@@ -41,6 +41,19 @@
         Pdf Viewer
       </button>
     </li>
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        [class.active]="activeTab === 'admin'"
+        type="button"
+        role="tab"
+        aria-controls="admin-pane"
+        aria-selected="{{ activeTab === 'admin' }}"
+        (click)="setTab('admin')"
+      >
+        Admin
+      </button>
+    </li>
   </ul>
 
   <div class="tab-content pt-3">
@@ -293,6 +306,16 @@
           </ng-container>
         </div>
       </div>
+    </div>
+
+    <div
+      id="admin-pane"
+      class="tab-pane fade"
+      [class.show]="activeTab === 'admin'"
+      [class.active]="activeTab === 'admin'"
+      role="tabpanel"
+    >
+      <app-admin-panel></app-admin-panel>
     </div>
   </div>
 

@@ -3,7 +3,7 @@
 import { Component, NgZone } from "@angular/core";
 import { NGXLogger } from "ngx-logger";
 import { DataService } from "./services/data.service";
-import { sql } from "@codemirror/lang-sql";
+import { sql, SQLite } from "@codemirror/lang-sql";
 // import brotliModulePromise from "brotli-wasm";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 const pdfWorkerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -58,7 +58,7 @@ export class AppComponent {
   isCreatingDb = false;
   statusMessage = "";
   lastAddress = "";
-  activeTab: "sql" | "pdf" | "pdfViewer" = "sql";
+  activeTab: "sql" | "pdf" | "pdfViewer" | "admin" = "sql";
   hasData = false;
   readonly requiredTables = ["Pages", "Cells", "PolygonData"];
   missingRequiredTables: string[] = [...this.requiredTables];
@@ -89,7 +89,7 @@ ORDER BY
     c.ExcelColumn;`;
   private readonly seedPlaceholder = "Please seed the Sqlite database";
   sqlInput = this.seedDisplayQuery;
-  sqlExtensions = [sql({ upperCaseKeywords: true })];
+  sqlExtensions = [sql({ upperCaseKeywords: true, dialect: SQLite })];
   queryResults: Array<{ columns: string[]; values: unknown[][] }> = [];
   hasDatabase = false;
   isSeeding = false;
@@ -650,7 +650,7 @@ ORDER BY
     }
   }
 
-  setTab(tab: "sql" | "pdf" | "pdfViewer"): void {
+  setTab(tab: "sql" | "pdf" | "pdfViewer" | "admin"): void {
     if (tab === "pdfViewer" && !this.hasDataFiles) {
       this.statusMessage = "Upload a PDF first to enable the viewer.";
       return;

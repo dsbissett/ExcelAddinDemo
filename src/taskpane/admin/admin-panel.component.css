@@ -1,0 +1,331 @@
+:host {
+  display: block;
+  height: 100%;
+}
+
+.admin-shell {
+  --primary: #4361ee;
+  --primary-dark: #3a56d4;
+  --secondary: #3f37c9;
+  --accent: #4895ef;
+  --light: #f8f9fa;
+  --dark: #212529;
+  --gray: #6c757d;
+  --success: #4cc9f0;
+  --danger: #f72585;
+  --warning: #f8961e;
+  --shadow: 0 4px 6px rgba(0, 0, 0, 0.08);
+  --border-radius: 8px;
+
+  display: flex;
+  min-height: 70vh;
+  background-color: #f5f7fa;
+  color: var(--dark);
+  border: 1px solid #e9ecef;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.admin-shell * {
+  box-sizing: border-box;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 240px;
+  background-color: #ffffff;
+  border-right: 1px solid #e9ecef;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid #e9ecef;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sidebar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.sidebar-menu {
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-menu-item {
+  padding: 12px 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
+  color: var(--dark);
+  font-size: 14px;
+}
+
+.sidebar-menu-item:hover {
+  background-color: #f8f9fa;
+  border-left-color: var(--primary);
+}
+
+.sidebar-menu-item.active {
+  background-color: #f0f4ff;
+  border-left-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.sidebar-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sidebar-empty {
+  padding: 16px;
+  color: var(--gray);
+  font-size: 13px;
+}
+
+/* Main Content */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  padding: 16px;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e9ecef;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-shadow: var(--shadow);
+}
+
+.header-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-btn {
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  background: #ffffff;
+  color: var(--dark);
+}
+
+.admin-btn-primary {
+  background-color: var(--primary);
+  color: #ffffff;
+}
+
+.admin-btn-primary:hover {
+  background-color: var(--primary-dark);
+}
+
+.admin-btn-secondary {
+  background-color: var(--light);
+  border-color: #dee2e6;
+}
+
+.admin-btn-secondary:hover {
+  background-color: #e9ecef;
+}
+
+.admin-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Query Editor */
+.query-editor {
+  padding: 16px;
+  background-color: #ffffff;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.editor-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.editor-meta {
+  font-size: 12px;
+  color: var(--gray);
+}
+
+.query-area {
+  min-height: 140px;
+  border: 1px solid #dee2e6;
+  border-radius: var(--border-radius);
+  padding: 12px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  resize: vertical;
+  outline: none;
+  transition: border 0.2s ease;
+}
+
+.query-area:focus {
+  border-color: var(--primary);
+}
+
+.admin-sql-editor {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  border: 1px solid #dee2e6;
+  border-radius: var(--border-radius);
+  overflow: hidden;
+}
+
+:host ::ng-deep .admin-sql-editor .cm-editor {
+  min-height: 180px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+}
+
+:host ::ng-deep .admin-sql-editor .cm-scroller {
+  min-height: 180px;
+}
+
+/* Results Table */
+.results {
+  margin-top: 16px;
+  flex: 1;
+  overflow: auto;
+  background-color: #ffffff;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.result-set {
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.result-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.result-count {
+  font-size: 12px;
+  color: var(--gray);
+}
+
+.table-wrapper {
+  overflow: auto;
+  border-radius: 8px;
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.results-table th,
+.results-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.results-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.results-table tr:hover {
+  background-color: #f8f9fa;
+}
+
+.empty-results,
+.empty-rows {
+  padding: 12px;
+  border: 1px dashed #dee2e6;
+  border-radius: 8px;
+  color: var(--gray);
+  font-size: 12px;
+  background: #fbfbfc;
+}
+
+/* Status Bar */
+.status-bar {
+  padding: 10px 16px;
+  background-color: #ffffff;
+  border-top: 1px solid #e9ecef;
+  font-size: 12px;
+  color: var(--gray);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .admin-shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid #e9ecef;
+  }
+}

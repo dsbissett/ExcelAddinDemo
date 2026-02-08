@@ -361,6 +361,47 @@ export class DataService {
     }
   }
 
+  async listTables(): Promise<string[]> {
+    this.logger.info("listTables: loading table list");
+    const database = await this.loadOrCreate();
+    return this.getUserTables(database);
+  }
+
+  async getTableRowCount(tableName: string): Promise<number> {
+    this.logger.info(`getTableRowCount: counting rows for ${tableName}`);
+    const database = await this.loadOrCreate();
+    const safeTable = this.escapeIdentifier(tableName);
+    try {
+      const result = database.exec(`SELECT COUNT(*) AS rowCount FROM ${safeTable};`);
+      const value = result?.[0]?.values?.[0]?.[0];
+      return typeof value === "number" ? value : Number(value) || 0;
+    } catch (error) {
+      this.logger.error(`getTableRowCount: failed for ${tableName}`, error);
+      return 0;
+    }
+  }
+
+  async previewTable(
+    tableName: string,
+    limit: number = 100,
+  ): Promise<{ columns: string[]; values: unknown[][] }> {
+    this.logger.info(`previewTable: loading preview for ${tableName}`);
+    const database = await this.loadOrCreate();
+    const safeTable = this.escapeIdentifier(tableName);
+    const safeLimit = Math.max(1, Math.min(Math.floor(limit), 500));
+    try {
+      const result = database.exec(`SELECT * FROM ${safeTable} LIMIT ${safeLimit};`);
+      const first = result?.[0];
+      return {
+        columns: first?.columns ?? [],
+        values: first?.values ?? [],
+      };
+    } catch (error) {
+      this.logger.error(`previewTable: failed for ${tableName}`, error);
+      return { columns: [], values: [] };
+    }
+  }
+
   async loadFilePart(xmlPartName: string): Promise<string | null> {
     this.logger.info(`loadFilePart: loading customXml part ${xmlPartName}`);
     await this.ensureExcelReady();
@@ -591,6 +632,12 @@ export class DataService {
       .toLowerCase() || "file";
     const suffix = Math.random().toString(36).slice(2, 8);
     return `${DATA_FILE_ELEMENT_PREFIX}-${safeName}-${suffix}`;
+  }
+
+  private escapeIdentifier(identifier: string): string {
+    const trimmed = identifier?.trim() ?? "";
+    const escaped = trimmed.replace(/"/g, "\"\"");
+    return `"${escaped}"`;
   }
 
   private escapeXmlAttribute(value: string): string {

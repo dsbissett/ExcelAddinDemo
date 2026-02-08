@@ -1,0 +1,104 @@
+<div class="admin-shell">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">Tables</div>
+      <button
+        type="button"
+        class="admin-btn admin-btn-secondary"
+        (click)="refreshTables()"
+        [disabled]="isLoadingTables || !isExcelHost"
+      >
+        {{ isLoadingTables ? "Loading..." : "Refresh" }}
+      </button>
+    </div>
+    <div class="sidebar-menu" *ngIf="tables.length; else emptyTables">
+      <button
+        type="button"
+        class="sidebar-menu-item"
+        *ngFor="let table of tables"
+        [class.active]="table === selectedTable"
+        (click)="selectTable(table)"
+      >
+        {{ table }}
+      </button>
+    </div>
+    <ng-template #emptyTables>
+      <div class="sidebar-empty">{{ emptyTablesMessage }}</div>
+    </ng-template>
+  </aside>
+
+  <section class="main">
+    <div class="header">
+      <div class="header-title">SQLite Admin Console</div>
+      <div class="header-actions">
+        <button
+          type="button"
+          class="admin-btn admin-btn-secondary"
+          (click)="refreshTables()"
+          [disabled]="isLoadingTables || !isExcelHost"
+        >
+          Refresh
+        </button>
+        <button
+          type="button"
+          class="admin-btn admin-btn-primary"
+          (click)="runQuery()"
+          [disabled]="isRunningQuery || !isExcelHost"
+        >
+          {{ isRunningQuery ? "Running..." : "Run Query" }}
+        </button>
+      </div>
+    </div>
+
+    <div class="query-editor">
+      <div class="editor-header">
+        <div class="editor-title">SQL Query</div>
+        <div class="editor-meta" *ngIf="selectedTable">Selected: {{ selectedTable }}</div>
+      </div>
+      <code-editor
+        class="admin-sql-editor"
+        [(ngModel)]="sqlInput"
+        [extensions]="sqlExtensions"
+        [lineWrapping]="true"
+        aria-label="SQL editor"
+      ></code-editor>
+      <div class="results">
+        <ng-container *ngIf="queryResults.length; else noResults">
+          <div class="result-set" *ngFor="let result of queryResults; let i = index">
+            <div class="result-header">
+              <div class="result-title">Result {{ i + 1 }}</div>
+              <div class="result-count">{{ result.values?.length || 0 }} rows</div>
+            </div>
+            <div class="table-wrapper" *ngIf="result.values?.length; else noRows">
+              <table class="results-table">
+                <thead>
+                  <tr>
+                    <th *ngFor="let col of result.columns">{{ col }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let row of result.values">
+                    <td *ngFor="let cell of row">
+                      {{ cell === null || cell === undefined ? "NULL" : cell }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <ng-template #noRows>
+              <div class="empty-rows">No rows returned.</div>
+            </ng-template>
+          </div>
+        </ng-container>
+        <ng-template #noResults>
+          <div class="empty-results">Run a query to see results.</div>
+        </ng-template>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span>{{ statusText }}</span>
+      <span>{{ tableCount }} tables | {{ recordCount }} records</span>
+    </div>
+  </section>
+</div>

@@ -5,9 +5,10 @@ import { LoggerModule, NgxLoggerLevel } from "ngx-logger";
 import { CodeEditorModule } from "@acrodata/code-editor";
 
 import { AppComponent } from "./app.component";
+import { AdminPanelComponent } from "./admin/admin-panel.component";
 
 @NgModule({
-  declarations: [AppComponent],
+  declarations: [AppComponent, AdminPanelComponent],
   imports: [
     BrowserModule,
     FormsModule,
