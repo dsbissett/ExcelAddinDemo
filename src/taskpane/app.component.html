@@ -232,7 +232,7 @@
                     <button
                       type="button"
                       class="btn btn-sm btn-outline-danger"
-                      [disabled]="!upload.xmlPartName || upload.isDeleting || upload.status === 'In Progress'"
+                      [disabled]="!upload.partUri || upload.isDeleting || upload.status === 'In Progress'"
                       (click)="deleteUpload(upload)"
                     >
                       Delete

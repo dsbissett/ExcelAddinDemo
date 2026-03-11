@@ -2,7 +2,7 @@
 
 import { Component, NgZone } from "@angular/core";
 import { NGXLogger } from "ngx-logger";
-import { DataService } from "./services/data.service";
+import { DataFileRecord, DataService } from "./services/data.service";
 import { sql, SQLite } from "@codemirror/lang-sql";
 // import brotliModulePromise from "brotli-wasm";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
@@ -16,19 +16,31 @@ interface UploadItem {
   status: UploadStatus;
   progress: number;
   rawFileSize?: number;
-  xmlPartName?: string;
+  partUri?: string;
+  relationshipId?: string | null;
+  documentId?: string;
+  contentType?: string;
+  contentHash?: string;
+  version?: number;
   createdUtc?: string;
+  updatedUtc?: string;
   isDeleting?: boolean;
 }
 
 interface PdfThumbnail {
+  documentId: string;
   fileName: string;
-  xmlPartName: string;
+  partUri: string;
+  relationshipId?: string | null;
+  contentType: string;
+  contentHash: string;
+  version: number;
   createdUtc?: string;
+  updatedUtc?: string;
   imageUrl: string;
   width?: number;
   height?: number;
-  pdfBase64?: string;
+  pdfBytes?: Uint8Array;
 }
 
 type ThumbnailResult = {
@@ -44,6 +56,11 @@ type ModalPage = {
   width: number;
   height: number;
   pageNumber: number;
+};
+
+type StagedUpload = {
+  upload: UploadItem;
+  record: DataFileRecord;
 };
 
 @Component({
@@ -97,7 +114,7 @@ ORDER BY
   isUploading = false;
   hasDataFiles = false;
   isLoadingThumbnails = false;
-  readonly uploadSteps = 6;
+  readonly uploadSteps = 5;
   uploads: UploadItem[] = [];
   pdfThumbnails: PdfThumbnail[] = [];
   showPdfModal = false;
@@ -299,28 +316,80 @@ ORDER BY
     }
 
     this.isUploading = true;
-    for (const upload of this.uploads) {
-      try {
-        await this.processSingleUpload(upload);
-      } catch (error) {
-        this.logger.error("File upload failed", error);
+    const stagedUploads: StagedUpload[] = [];
+    let packageCommitted = false;
+
+    try {
+      await this.dataService.beginWorkbookPackageBatch();
+
+      for (const upload of this.uploads) {
+        try {
+          const record = await this.processSingleUpload(upload);
+          stagedUploads.push({ upload, record });
+        } catch (error) {
+          this.logger.error("File upload failed", error);
+          this.zone.run(() => {
+            upload.status = "Queued";
+            upload.progress = 0;
+            this.uploads = [...this.uploads];
+            this.statusMessage = `Upload failed for ${upload.fileName}: ${
+              error instanceof Error ? error.message : String(error)
+            }`;
+          });
+        }
+      }
+
+      if (stagedUploads.length > 0) {
         this.zone.run(() => {
-          upload.status = "Queued";
-          upload.progress = 0;
-          this.uploads = [...this.uploads];
-          this.statusMessage = `Upload failed for ${upload.fileName}: ${
-            error instanceof Error ? error.message : String(error)
-          }`;
+          this.statusMessage = "Finalizing uploaded files...";
+        });
+
+        await this.dataService.commitWorkbookPackageBatch();
+        packageCommitted = true;
+
+        await this.dataService.recordDataFiles(stagedUploads.map((staged) => staged.record));
+        const persistedCount = stagedUploads.length;
+        for (const staged of stagedUploads) {
+          this.updateUploadProgress(staged.upload, this.uploadSteps, this.uploadSteps, "Complete");
+        }
+
+        this.zone.run(() => {
+          if (persistedCount > 0) {
+            this.hasDatabase = true;
+            this.hasDataFiles = true;
+            this.statusMessage = `File uploads recorded (${persistedCount}/${stagedUploads.length}).`;
+          }
         });
       }
+    } catch (error) {
+      this.logger.error("processUploadsSequentially: failed while finalizing upload batch", error);
+      this.zone.run(() => {
+        for (const staged of stagedUploads) {
+          staged.upload.status = "Queued";
+          staged.upload.progress = 0;
+          staged.upload.partUri = undefined;
+          staged.upload.relationshipId = undefined;
+          staged.upload.documentId = undefined;
+          staged.upload.contentType = undefined;
+          staged.upload.contentHash = undefined;
+          staged.upload.version = undefined;
+          staged.upload.createdUtc = undefined;
+          staged.upload.updatedUtc = undefined;
+        }
+        this.uploads = [...this.uploads];
+        this.statusMessage = `Batch upload failed: ${error instanceof Error ? error.message : String(error)}`;
+      });
+    } finally {
+      if (!packageCommitted) {
+        this.dataService.rollbackWorkbookPackageBatch();
+      }
+      this.zone.run(() => {
+        this.isUploading = false;
+      });
     }
-
-    this.zone.run(() => {
-      this.isUploading = false;
-    });
   }
 
-  private async processSingleUpload(upload: UploadItem): Promise<void> {
+  private async processSingleUpload(upload: UploadItem): Promise<DataFileRecord> {
     const totalSteps = this.uploadSteps;
     this.updateUploadProgress(upload, 0, totalSteps, "In Progress");
 
@@ -339,35 +408,37 @@ ORDER BY
     const thumbnail = await this.renderPdfThumbnail(new Uint8Array(pdfBytes));
     this.updateUploadProgress(upload, 2, totalSteps);
 
-    // 3. Base64 encode the PDF for storage (using the untouched original buffer)
-    const base64Payload = this.bytesToBase64(pdfBytes);
+    // 3. Save the PDF as a binary package part in the workbook
+    const part = await this.dataService.saveFilePart(upload.fileName, pdfBytes, { deferWorkbookWrite: true });
+    upload.partUri = part.partUri;
+    upload.relationshipId = part.relationshipId;
+    upload.documentId = part.documentId;
+    upload.contentType = part.contentType;
+    upload.contentHash = part.contentHash;
+    upload.version = part.version;
+    upload.createdUtc = part.createdUtc;
+    upload.updatedUtc = part.updatedUtc;
     this.updateUploadProgress(upload, 3, totalSteps);
 
-    // 4. Save the file as a customXml part in the Excel document
-    const { xmlPartName, createdUtc } = await this.dataService.saveFilePart(upload.fileName, base64Payload);
-    upload.xmlPartName = xmlPartName;
-    upload.createdUtc = createdUtc;
-    this.updateUploadProgress(upload, 4, totalSteps);
-
-    // 5. Create an entry in the DataFiles table (including thumbnail)
-    await this.dataService.recordDataFile({
+    const record: DataFileRecord = {
+      documentId: part.documentId,
       fileName: upload.fileName,
-      xmlPartName,
+      contentType: part.contentType,
+      partUri: part.partUri,
+      relationshipId: part.relationshipId,
+      contentHash: part.contentHash,
+      version: part.version,
+      pdfPayload: pdfBytes,
       rawFileSize,
       thumbnailPng: thumbnail.pngBytes,
       thumbnailWidth: thumbnail.width,
       thumbnailHeight: thumbnail.height,
       thumbnailMimeType: thumbnail.mimeType,
-      createdUtc,
-    });
-
-    this.updateUploadProgress(upload, 5, totalSteps);
-    this.updateUploadProgress(upload, totalSteps, totalSteps, "Complete");
-    this.zone.run(() => {
-      this.hasDatabase = true;
-      this.hasDataFiles = true;
-      this.statusMessage = "File upload recorded.";
-    });
+      createdUtc: part.createdUtc,
+      updatedUtc: part.updatedUtc,
+    };
+    this.updateUploadProgress(upload, 4, totalSteps);
+    return record;
   }
 
   private updateUploadProgress(upload: UploadItem, step: number, totalSteps: number, status?: UploadStatus): void {
@@ -450,9 +521,8 @@ ORDER BY
       this.pdfModalProgress = 0;
     });
     try {
-      const payloadBase64 =
-        thumb.pdfBase64 ?? (await this.dataService.loadFilePart(thumb.xmlPartName)) ?? undefined;
-      if (!payloadBase64) {
+      const pdfBytes = thumb.pdfBytes ?? (await this.dataService.loadFilePart(thumb.partUri)) ?? undefined;
+      if (!pdfBytes) {
         this.zone.run(() => {
           const message = "Unable to load PDF content from workbook.";
           this.statusMessage = message;
@@ -463,13 +533,12 @@ ORDER BY
         return;
       }
 
-      const pdfBytes = this.base64ToBytes(payloadBase64);
       this.revokePdfUrl();
-      const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: thumb.contentType || "application/pdf" });
       const url = URL.createObjectURL(blob);
 
-      if (!thumb.pdfBase64) {
-        thumb.pdfBase64 = payloadBase64;
+      if (!thumb.pdfBytes) {
+        thumb.pdfBytes = pdfBytes;
       }
 
       await this.renderPdfForModal(pdfBytes);
@@ -615,7 +684,7 @@ ORDER BY
       this.statusMessage = "Connect to Excel to delete files.";
       return;
     }
-    if (!upload.xmlPartName) {
+    if (!upload.partUri) {
       this.statusMessage = "File has not been saved yet; nothing to delete.";
       return;
     }
@@ -628,12 +697,12 @@ ORDER BY
     });
 
     try {
-      await this.dataService.deleteDataFile(upload.xmlPartName);
+      await this.dataService.deleteDataFile(upload.partUri);
       this.zone.run(() => {
         this.uploads = this.uploads.filter((item) => item !== upload);
-        this.pdfThumbnails = this.pdfThumbnails.filter((thumb) => thumb.xmlPartName !== upload.xmlPartName);
+        this.pdfThumbnails = this.pdfThumbnails.filter((thumb) => thumb.partUri !== upload.partUri);
         this.hasDataFiles =
-          this.uploads.some((item) => Boolean(item.xmlPartName)) || this.pdfThumbnails.length > 0;
+          this.uploads.some((item) => Boolean(item.partUri)) || this.pdfThumbnails.length > 0;
         this.statusMessage = `Deleted ${upload.fileName}.`;
       });
     } catch (error) {
@@ -678,33 +747,46 @@ ORDER BY
 
         // Seed with current uploads for quick lookup
         for (const item of existing) {
-          if (item.xmlPartName) {
-            updated.set(item.xmlPartName, item);
+          if (item.partUri) {
+            updated.set(item.partUri, item);
           }
         }
 
         for (const record of records) {
-          const existingItem = updated.get(record.xmlPartName);
+          const existingItem = updated.get(record.partUri);
           if (existingItem) {
             existingItem.status = "Complete";
             existingItem.progress = 100;
+            existingItem.documentId = record.documentId;
             existingItem.fileName = record.fileName;
+            existingItem.contentType = record.contentType;
+            existingItem.partUri = record.partUri;
+            existingItem.relationshipId = record.relationshipId;
+            existingItem.contentHash = record.contentHash;
+            existingItem.version = record.version;
             existingItem.rawFileSize = record.rawFileSize;
             existingItem.createdUtc = record.createdUtc;
+            existingItem.updatedUtc = record.updatedUtc;
           } else {
-            updated.set(record.xmlPartName, {
+            updated.set(record.partUri, {
+              documentId: record.documentId,
               fileName: record.fileName,
               status: "Complete",
               progress: 100,
+              contentType: record.contentType,
+              partUri: record.partUri,
+              relationshipId: record.relationshipId,
+              contentHash: record.contentHash,
+              version: record.version,
               rawFileSize: record.rawFileSize,
-              xmlPartName: record.xmlPartName,
               createdUtc: record.createdUtc,
+              updatedUtc: record.updatedUtc,
             });
           }
         }
 
-        // Keep any in-flight uploads (no xmlPartName yet)
-        const inflight = existing.filter((item) => !item.xmlPartName);
+        // Keep any in-flight uploads (no partUri yet)
+        const inflight = existing.filter((item) => !item.partUri);
         this.uploads = [...updated.values(), ...inflight];
         this.hasDataFiles = [...updated.values()].length > 0;
       });
@@ -743,9 +825,15 @@ ORDER BY
         const base64Thumb = this.bytesToBase64(new Uint8Array(pngBytes));
 
         thumbnails.push({
+          documentId: record.documentId,
           fileName: record.fileName,
-          xmlPartName: record.xmlPartName,
+          partUri: record.partUri,
+          relationshipId: record.relationshipId,
+          contentType: record.contentType,
+          contentHash: record.contentHash,
+          version: record.version,
           createdUtc: record.createdUtc,
+          updatedUtc: record.updatedUtc,
           imageUrl: `data:${mimeType};base64,${base64Thumb}`,
           width: record.thumbnailWidth ?? undefined,
           height: record.thumbnailHeight ?? undefined,

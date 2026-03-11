@@ -60,8 +60,14 @@ CREATE TEMP TABLE RawJson (
 -- =====================================================
 CREATE TABLE DataFiles (
     DataFileID          INTEGER PRIMARY KEY AUTOINCREMENT,
+    DocumentID          TEXT NOT NULL,
     FileName            TEXT NOT NULL,
-    XmlPartName         TEXT NOT NULL,
+    ContentType         TEXT NOT NULL DEFAULT 'application/pdf',
+    PartUri             TEXT NOT NULL,
+    RelationshipId      TEXT NULL,
+    ContentHash         TEXT NOT NULL DEFAULT '',
+    Version             INTEGER NOT NULL DEFAULT 1,
+    PdfPayload          BLOB NULL,
 
     -- Original PDF size (no compression anymore)
     RawFileSize         INTEGER NOT NULL,
@@ -74,33 +80,23 @@ CREATE TABLE DataFiles (
 
     CreatedUtc          TEXT NOT NULL
         DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UpdatedUtc          TEXT NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 
-    UNIQUE (FileName),
+    UNIQUE (DocumentID),
+    UNIQUE (PartUri),
 
+    CHECK (length(trim(DocumentID)) > 0),
     CHECK (length(trim(FileName)) > 0),
-    CHECK (length(trim(XmlPartName)) > 0),
+    CHECK (length(trim(ContentType)) > 0),
+    CHECK (length(trim(PartUri)) > 0),
     CHECK (RawFileSize >= 0),
+    CHECK (Version >= 1),
     CHECK (ThumbnailWidth IS NULL OR ThumbnailWidth > 0),
     CHECK (ThumbnailHeight IS NULL OR ThumbnailHeight > 0)
 );
 
--- CREATE TABLE DataFiles (
---     DataFileID          INTEGER PRIMARY KEY AUTOINCREMENT,
---     FileName            TEXT NOT NULL,
---     XmlPartName         TEXT NOT NULL,
---     RawFileSize         INTEGER NOT NULL,
---     CompressedFileSize  INTEGER NOT NULL,
---     CreatedUtc          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-
---     UNIQUE (FileName),
-
---     CHECK (length(trim(FileName)) > 0),
---     CHECK (length(trim(XmlPartName)) > 0),
---     CHECK (RawFileSize >= 0),
---     CHECK (CompressedFileSize >= 0)
--- );
-
-CREATE INDEX IF NOT EXISTS IX_DataFiles_XmlPartName ON DataFiles(XmlPartName);
+CREATE INDEX IF NOT EXISTS IX_DataFiles_PartUri ON DataFiles(PartUri);
 
 -- =====================================================
 -- 6. Paste JSON here ONCE
